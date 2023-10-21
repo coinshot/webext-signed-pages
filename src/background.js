@@ -3,9 +3,9 @@ import browser from 'webextension-polyfill';
 import { hasFilteredResponse } from 'browser-check';
 import { matchPatternToRegExp } from 'match-pattern';
 
-import * as openpgp from 'openpgp';
+import { readKey, createMessage, readSignature, verify } from 'openpgp';
 
-import Minimize from 'minimize';
+import { minify } from 'html-minifier-terser';
 
 import defaultItems from 'default-items';
 
@@ -51,22 +51,22 @@ const badSignature = createSignatureData('images/sigBad.png', 'Bad or Missing Si
 const neutralSignature = createSignatureData('images/sigNeutral.png', 'No signature expected.', true);
 
 function updateBrowserAction(data, tabId) {
-  browser.pageAction.setIcon({
+  browser.browserAction.setIcon({
     path: data.icon,
     tabId,
   });
 
-  browser.pageAction.setTitle({
+  browser.browserAction.setTitle({
     title: data.title,
     tabId,
   });
 
-  const pageAction = chrome ? chrome.pageAction : browser.pageAction;
-  if (data.disable) {
-    pageAction.hide(tabId);
-  } else {
-    pageAction.show(tabId);
-  }
+  // const browserAction = chrome ? chrome.browserAction : browser.browserAction;
+  // if (data.disable) {
+  //   browserAction.hide(tabId);
+  // } else {
+  //   browserAction.show(tabId);
+  // }
 }
 
 function getPubkey(pubkeyPatterns, url) {
@@ -76,31 +76,47 @@ function getPubkey(pubkeyPatterns, url) {
 // Cache the result status in case we are not doing web requests.
 let statusCache = {};
 
+async function verifySignature(content, signature, pubkey) {
+  const publicKey = await readKey({ armoredKey: pubkey })
+  const message = await createMessage({ text: content })
+  const detachedSignature = await readSignature({ armoredSignature: signature })
+
+  const verified = await verify({
+    message,
+    verificationKeys: publicKey,
+    signature: detachedSignature
+  })
+
+  return await verified.signatures[0].verified
+    .then(result => result)
+    .catch(_ => false);
+}
+
 function processPage(rawContent, signature, url, tabId) {
   const shouldCheck = getPubkey(patterns, url);
 
   if (shouldCheck) {
-    const content = new Minimize({ spare:true, conditionals: true, empty: true, quotes: true }).parse(rawContent)
-      .replace(/^\s*<!doctype[^>]*>/i, '');
+    const content = minify(rawContent, {
+      removeComments: true,
+      ignoreCustomComments: [],
+      removeEmptyElements: false,
+      removeAttributeQuotes: false
+    }).then((content) => {
+      return content.replace(/^\s*<!doctype[^>]*>/i, '')
+    }).then((content) => {
+      try {
+        const pubkey = patterns[shouldCheck];
 
-    try {
-      const pubkey = patterns[shouldCheck];
-
-      const options = {
-        message: openpgp.message.fromBinary(openpgp.util.str2Uint8Array(content)),
-        signature: openpgp.signature.readArmored(signature),
-        publicKeys: openpgp.key.readArmored(pubkey).keys,
-      };
-
-      openpgp.verify(options).then((verified) => {
-        const signatureData = (verified.signatures[0].valid) ? goodSignature : badSignature;
-        updateBrowserAction(signatureData, tabId);
-        statusCache[url] = signatureData;
-      });
-    } catch (e) {
-      updateBrowserAction(badSignature, tabId);
-      statusCache[url] = badSignature;
-    }
+        verifySignature(content, signature, pubkey).then((verified) => {
+          const signatureData = verified ? goodSignature : badSignature;
+          updateBrowserAction(signatureData, tabId);
+          statusCache[url] = signatureData;
+        });
+      } catch (e) {
+        updateBrowserAction(badSignature, tabId);
+        statusCache[url] = badSignature;
+      }
+    })
   } else {
     updateBrowserAction(neutralSignature, tabId);
   }

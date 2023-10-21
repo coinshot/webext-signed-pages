@@ -2,6 +2,7 @@ const path = require('path');
 const webpack = require('webpack');
 
 module.exports = () => ({
+  mode: 'production',
   entry: {
     // Each entry in here would declare a file that needs to be transpiled
     // and included in the extension source.
@@ -44,6 +45,14 @@ module.exports = () => ({
       path.join(__dirname, 'src'),
       'node_modules',
     ],
+    fallback: {
+      "fs": false,
+      "http": false,
+      "https": false,
+      "os": false,
+      "path": false,
+      "url": false
+    }
   },
   plugins: [
     // Since some NodeJS modules expect to be running in Node, it is helpful
@@ -51,17 +60,11 @@ module.exports = () => ({
     new webpack.DefinePlugin({
       'process.env.NODE_ENV': JSON.stringify('production'),
     }),
+    new webpack.ProvidePlugin({
+        process: 'process',
+    })
   ],
-  // Some libraries import Node modules but don't use them in the browser.
-  // Tell Webpack to provide empty mocks for them so importing them works.
-  node: {
-    dgram: 'empty',
-    fs: 'empty',
-    net: 'empty',
-    tls: 'empty',
-    child_process: 'empty',
-  },
   // This will expose source map files so that errors will point to your
   // original source files instead of the transpiled files.
-  devtool: 'sourcemap',
+  devtool: 'source-map',
 });
